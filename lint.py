@@ -3,7 +3,7 @@
 Run: python3 lint.py --vault /path/to/vault   (exit 1 when anything is found)
 Config lives in <vault>/handbook.json under "lint":
   {"files": ["90-Meta/*.md", "~/.claude/skills/*/SKILL.md"],
-   "banned": ["second brain"], "sections": ["WUF", "Personal"], "title_max": 60}
+   "banned": ["second brain"], "sections": ["ACME", "Personal"], "title_max": 60}
 """
 import glob
 import json

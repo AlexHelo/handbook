@@ -3034,7 +3034,7 @@ def linear_blocks():
     teams, rows = [], {}
 
     def team_of(x):
-        # ponytail: the client is the project's first word ("Costco / Lockton" -> Costco); the team when there is no project
+        # ponytail: the client is the project's first word ("ACME / Northwind" -> ACME); the team when there is no project
         proj = (x.get("project") or {}).get("name") or ""
         return proj.split()[0] if proj else (x.get("team") or {}).get("name") or "Linear"
     for x in ordered:

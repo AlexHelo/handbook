@@ -1,6 +1,6 @@
 # handbook
 
-I run my company through an AI agent that writes markdown. This is the dashboard that renders it. One file, Python stdlib, bring your own AI.
+A one-page dashboard over a folder of markdown notes. Your task board, your Linear tickets in plan order, your pull requests with their CI state, your deals with their next step, and a questions inbox, on one screen. One Python file, standard library only, nothing to install.
 
 Status: alpha. It works for one person every day. Expect churn.
 
@@ -28,7 +28,7 @@ Drop a `handbook.json` in your vault root. Every key is optional:
 }
 ```
 
-Private extras: a `<vault>/.dashboard/extras.py` with an `anchor(config)` function returning HTML is rendered in the day header. That is where anything personal lives that should not be in this repo.
+Private extras: a `<vault>/.dashboard/extras.py` with an `anchor(config)` function returning HTML is rendered in the day header. That is where anything personal lives that does not belong in a public repo.
 
 
 Integrations are opt-in per vault: `"integrations": ["attio", "linear", "github"]`. Attio reads `ATTIO_TOKEN` or `~/.attio-token`, Linear reads `LINEAR_API_KEY` or `~/.secrets/linear-api-key` and shows the issues assigned to you or in projects you lead, GitHub uses `gh auth login`.
@@ -39,6 +39,6 @@ No auth, by design. It binds to localhost, refuses form posts from any other ori
 
 ## The loop it belongs to
 
-The dashboard is the desk surface. An agent (Claude Code, Codex, anything that reads `AGENTS.md`) does the writing: a morning brief, a capture sync, an end-of-day close. Those prompts are yours to write; the starter vault shows the shapes they produce.
+The dashboard only reads and renders. What writes the notes is up to you: your own hands, a script, or a coding agent that reads `AGENTS.md`. The starter vault shows the shapes it expects.
 
 Maintained casually. No roadmap promises. MIT.
