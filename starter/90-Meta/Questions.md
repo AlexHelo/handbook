@@ -13,3 +13,7 @@ The pricing page copy in [[Company]] has both. Which one leads?
 ## Inbox from dashboard
 
 - try the note box on the handbook tab
+
+## Replies
+
+*(one line per inbox note the assistant handled: `- "note" → what happened · MM-DD HH:MM`; the dashboard shows the last twelve)*

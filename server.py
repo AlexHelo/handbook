@@ -127,6 +127,7 @@ ATTIO_TOKEN = CONFIG["attio_token"]
 REPOS = CONFIG["repos"]
 PORT = CONFIG["port"]
 INBOX_HEADER = "## Inbox from dashboard"
+REPLIES_HEADER = "## Replies"
 GH_WINDOW_DAYS = 14
 AGING_DAYS = 14
 RECENT_DAYS = 7
@@ -521,6 +522,27 @@ def inbox_entries():
     if idx == -1:
         return []
     return [clean(l[2:]) for l in text[idx:].splitlines() if l.startswith("- ")]
+
+
+def replies(n=12):
+    """The assistant's answers to inbox notes: `- "note" → what happened · MM-DD HH:MM`, newest first."""
+    if not QUESTIONS.exists():
+        return []
+    text = QUESTIONS.read_text()
+    idx = text.find(REPLIES_HEADER)
+    if idx == -1:
+        return []
+    block = text[idx + len(REPLIES_HEADER):]
+    end = block.find("\n## ")
+    block = block[:end] if end != -1 else block
+    out = []
+    for l in block.splitlines():
+        if not l.startswith("- "):
+            continue
+        body, sep, stamp = l[2:].rpartition(" · ")
+        note, _, reply = (body if sep else l[2:]).partition(" → ")
+        out.append({"note": clean(note.strip('" ')), "reply": clean(reply), "stamp": stamp if sep else ""})
+    return list(reversed(out))[:n]
 
 
 def intake_files():
@@ -3249,6 +3271,18 @@ def m_waiting(c):
     return panel("not picked up yet", body, len(c["inbox"]))
 
 
+def m_replies(c):
+    rows = "".join(
+        f'<div class="row"><div class="body"><div class="line"><span class="t">{E(r["reply"] or r["note"])}</span>'
+        f'<span class="prov">{E(r["stamp"])}</span></div>'
+        + (f'<div class="sub">{E(r["note"])}</div>' if r["reply"] else "")
+        + '</div></div>'
+        for r in c["replies"])
+    if not rows:
+        return ""
+    return panel("answered", f'<div class="rows">{rows}</div>', len(c["replies"]))
+
+
 # ----------------------------------------------------------- handbook module
 
 def tree_html(paths, current):
@@ -3430,7 +3464,7 @@ SECTIONS = [
     ("handbook", "handbook", lambda c: len(c["pages"]), [m_handbook]),
     ("pipeline", "pipeline", lambda c: len(c["deals"]), [m_pipeline]),
     ("questions", "questions", lambda c: c["q_total"], [m_queue, m_intake]),
-    ("inbox", "inbox", lambda c: len(c["inbox"]), [m_capture, m_waiting]),
+    ("inbox", "inbox", lambda c: len(c["inbox"]), [m_capture, m_waiting, m_replies]),
 ]
 
 
@@ -3461,6 +3495,7 @@ def context(hb=None):
         "build": cached("build", 120, gh_build) if on("github") else {"review": [], "mine": []},
         "queue": queue, "q_total": q_total,
         "inbox": inbox_entries(),
+        "replies": replies(),
         "drift": cached("drift", 300, drift),
         "hb": hb, "pages": cached("pages", 30, vault_pages), "repos": repos,
         "log": (repo_timeline(repos, hb["repo"])
@@ -3538,7 +3573,7 @@ def fragment(name, hb=None):
 SKELETON = {
     "90-Meta/Questions.md": "# Questions\n\nThe standing inbox between you and your agent. "
     "It files what only you can answer; you answer under `**A:**`.\n\n## Open\n\n"
-    "## Answered\n\n## Inbox from dashboard\n",
+    "## Answered\n\n## Inbox from dashboard\n\n## Replies\n",
     "90-Meta/Assistant-Memory.md": "# Assistant memory\n\nWhat the morning run carries "
     "between days.\n\n## Tier-1 carry\n\n### Bench\n",
     "90-Meta/Capture-Log.md": "# Capture log\n\nOne line per capture run.\n",
@@ -4457,6 +4492,29 @@ def test_group_toggle():
         assert "GKEY='hbgroups'" in JS and "restoreGroups(el)" in JS
     finally:
         TODO, CONFIG["todo"] = keep
+        shutil.rmtree(d)
+
+
+def test_replies():
+    global QUESTIONS
+    import shutil
+    import tempfile
+    d = pathlib.Path(tempfile.mkdtemp())
+    keep = QUESTIONS
+    QUESTIONS = d / "Questions.md"
+    try:
+        QUESTIONS.write_text("## Open\n\n## Inbox from dashboard\n\n- still waiting\n\n## Replies\n\n"
+                             '- "call the bank" → filed under Personal, due Friday · 09-08 12:04\n'
+                             '- "what is next on WUF" → WUF-22, the notes move · 09-08 14:06\n')
+        r = replies()
+        assert [x["note"] for x in r] == ["what is next on WUF", "call the bank"], r
+        assert r[1]["reply"] == "filed under Personal, due Friday" and r[1]["stamp"] == "09-08 12:04", r
+        html = m_replies({"replies": r})
+        assert "answered" in html and "the notes move" in html and 'class="sub">call the bank' in html, html
+        assert m_replies({"replies": []}) == ""
+        assert QUESTIONS.exists() and inbox_entries() == ["still waiting"]
+    finally:
+        QUESTIONS = keep
         shutil.rmtree(d)
 
 
