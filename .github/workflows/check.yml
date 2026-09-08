@@ -1,0 +1,10 @@
+name: check
+on: [push, pull_request]
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: python3 server.py --vault starter --check
+      - run: python3 lint.py --vault starter
+      - run: python3 check_imports.py

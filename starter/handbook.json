@@ -1,0 +1,9 @@
+{
+  "owner": "Sam",
+  "port": 4322,
+  "repos": [],
+  "repos_git": ["."],
+  "domain_tones": {"10-Company": "#C08A3E", "20-Projects": "#4E7D8C", "90-Meta": "#8A7CA8"},
+  "integrations": [],
+  "lint": {"files": ["*.md", "90-Meta/*.md"], "banned": ["TODO later"], "sections": ["Company", "Side project"]}
+}
