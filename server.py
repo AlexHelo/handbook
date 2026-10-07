@@ -46,6 +46,7 @@ CONFIG = {
     "sections": [],
     "integrations": ["attio", "linear", "github"],
     "linear_mine": True,
+    "invoice_prefix": "Invoice",
     "lint": {},
     "attio_token": pathlib.Path.home() / ".attio-token",
     "linear_key_path": pathlib.Path.home() / ".secrets" / "linear-api-key",
@@ -928,6 +929,33 @@ def attio_next_steps():
         return {}
 
 
+def invoices_due(tasks, today=None):
+    """Open tasks named with the invoice prefix, due within a week or already passed, soonest first."""
+    prefix = CONFIG["invoice_prefix"]
+    head = re.compile(re.escape(prefix) + r"[: ]", re.I)
+    limit = (today or datetime.date.today()) + datetime.timedelta(days=7)
+    out = []
+    for t in tasks:
+        text = (t.get("content_plaintext") or "").strip()
+        if t.get("is_completed") or not head.match(text):
+            continue
+        try:
+            due = datetime.date.fromisoformat((t.get("deadline_at") or "")[:10])
+        except ValueError:
+            continue
+        if due <= limit:
+            out.append({"text": text[len(prefix):].lstrip(": "), "due": due,
+                        "links": [x.get("target_record_id") for x in t.get("linked_records") or []]})
+    return sorted(out, key=lambda x: x["due"])
+
+
+def attio_invoices():
+    try:
+        return invoices_due(attio_get("/tasks?limit=100").get("data", []))
+    except Exception:
+        return []
+
+
 LINEAR_URL = "https://api.linear.app/graphql"
 LINEAR_FIELDS = '{nodes{identifier title url priority sortOrder state{name type} team{name} project{name} assignee{name isMe}}}'
 
@@ -944,6 +972,9 @@ LINEAR_MINE = ('{issues(first:30, filter:{state:{type:{nin:["completed","cancele
                + LINEAR_FIELDS + '}')
 LINEAR_QUERY = ('{issues(first:30, filter:{state:{type:{nin:["completed","canceled"]}}})'
                 + LINEAR_FIELDS + '}')
+LINEAR_ALL = ('{issues(first:100, filter:{state:{type:{nin:["completed","canceled"]}}})'
+              '{nodes{identifier title url priority sortOrder createdAt state{name type}'
+              ' team{key name} project{name} assignee{name isMe}}}}')
 
 
 def linear_ordered(issues):
@@ -978,6 +1009,25 @@ def linear_issues():
     req = urllib.request.Request(
         LINEAR_URL, method="POST",
         data=json.dumps({"query": query}).encode(),
+        headers={"Authorization": key, "Content-Type": "application/json"})
+    try:
+        with urllib.request.urlopen(req, timeout=10) as r:
+            data = json.load(r)
+    except urllib.error.HTTPError as exc:
+        return {"error": f"Linear answered {exc.code}."}
+    except Exception:
+        return {"error": "Linear did not answer."}
+    if data.get("errors"):
+        return {"error": "Linear rejected the query."}
+    return ((data.get("data") or {}).get("issues") or {}).get("nodes", [])
+
+
+def linear_all():
+    """Every open issue in the workspace, any assignee. The key never leaves this function."""
+    key = secret("LINEAR_API_KEY", CONFIG["linear_key_path"])
+    req = urllib.request.Request(
+        LINEAR_URL, method="POST",
+        data=json.dumps({"query": LINEAR_ALL}).encode(),
         headers={"Authorization": key, "Content-Type": "application/json"})
     try:
         with urllib.request.urlopen(req, timeout=10) as r:
@@ -1642,6 +1692,7 @@ a{color:inherit;}
   letter-spacing:-.015em;}
 .group:first-child{border-top:0;margin-top:0;padding-top:2px;}
 .group .n{font:400 12px/1 var(--mono);color:var(--ink-2);}
+.group.warn .n,.prov.warn{color:var(--warn);}
 button.group{width:100%;background:none;color:inherit;border:0;text-align:left;
   cursor:pointer;}
 .chev{margin-left:auto;font:400 13px/1 var(--mono);color:var(--ink-2);}
@@ -2912,6 +2963,65 @@ def m_clocks(c):
     return panel("clocks", f'<div class="stats">{cells}</div>', len(c["clocks"]))
 
 
+TRIAGE_STALE_DAYS = 3
+WEEK_ROWS = 8
+
+
+def week_row(title, href="", pfx="", tag="", prov="", warn=False):
+    t = f'<span class="pfx">{E(pfx)} · </span>{E(title)}' if pfx else E(title)
+    t = (f'<a class="t" href="{E(href)}" target="_blank" rel="noopener">{t}</a>' if href
+         else f'<span class="t">{t}</span>')
+    tag = f'<span class="pill tag">{E(tag)}</span>' if tag else ""
+    return (f'<div class="row"><div class="body"><div class="line">{t}{tag}'
+            f'<span class="prov{" warn" if warn else ""}">{E(prov)}</span></div></div></div>')
+
+
+def week_group(name, rows, n, warn=False):
+    return (f'<div class="group{" warn" if warn else ""}">{E(name)}<span class="n">{n}</span></div>'
+            f'<div class="rows">{rows}</div>')
+
+
+def m_week(c):
+    """The next ticket per Linear team, triage left sitting, and invoices due within a week."""
+    body = ""
+    if on("linear") and secret("LINEAR_API_KEY", CONFIG["linear_key_path"]):
+        got = cached("linear_all", 60, linear_all)
+        issues = got if isinstance(got, list) else []
+        firsts = {}
+        for x in linear_ordered(issues):
+            firsts.setdefault((x.get("team") or {}).get("key") or "", x)
+        if firsts:
+            rows = "".join(week_row(x.get("title", ""), x.get("url", ""), x.get("identifier", ""),
+                                    k, (x.get("project") or {}).get("name") or "")
+                           for k, x in firsts.items())
+            body += week_group("Next per team", rows, len(firsts))
+        stale = sorted((x for x in linear_triage(issues)
+                        if (iso_days(x.get("createdAt")) or 0) > TRIAGE_STALE_DAYS),
+                       key=lambda x: x.get("createdAt") or "")
+        if stale:
+            rows = "".join(week_row(x.get("title", ""), x.get("url", ""), x.get("identifier", ""),
+                                    (x.get("team") or {}).get("key") or "",
+                                    f'{iso_days(x.get("createdAt"))}d')
+                           for x in stale[:WEEK_ROWS])
+            if len(stale) > WEEK_ROWS:
+                rows += week_row(f"and {len(stale) - WEEK_ROWS} more")
+            body += week_group(f"In triage over {TRIAGE_STALE_DAYS} days", rows, len(stale), warn=True)
+    if on("attio"):
+        deals = {d["id"]: d for d in c.get("deals") or []}
+        today = datetime.date.today()
+        rows = ""
+        due = cached("invoices", 60, attio_invoices)
+        for t in due:
+            deal = next((deals[i] for i in t["links"] if i in deals), None)
+            left = (t["due"] - today).days
+            prov = f"passed {-left}d" if left < 0 else t["due"].strftime("due %a %-d")
+            rows += (week_row(t["text"], deal["url"], deal["name"], "", prov, left < 0) if deal
+                     else week_row(t["text"][:60], "", "", "", prov, left < 0))
+        if rows:
+            body += week_group("Invoices due", rows, len(due))
+    return panel("this week", body, cap="next per team, stale triage, money due")
+
+
 def pblock(name, rows, n, sort=True, shut=False, extra=""):
     sort_sel = ('<select class="gsort" onchange="setSort(this)" onclick="event.stopPropagation()" '
                 'title="order inside this group"><option value="board">board order</option>'
@@ -3459,7 +3569,7 @@ def repo_keys(repos, active):
 
 
 SECTIONS = [
-    ("today", "today", None, [m_anchor, m_stats, m_clocks, m_focus]),
+    ("today", "today", None, [m_anchor, m_stats, m_clocks, m_week, m_focus]),
     ("tasks", "tasks", work_count, [m_board]),
     ("handbook", "handbook", lambda c: len(c["pages"]), [m_handbook]),
     ("pipeline", "pipeline", lambda c: len(c["deals"]), [m_pipeline]),
@@ -4086,6 +4196,7 @@ def selftest():
     test_watch_stamps()
     test_fragments()
     test_linear_panel()
+    test_week_panel()
     test_sse_cap()
     test_config_overlay()
     test_starter_vault()
@@ -4364,6 +4475,76 @@ def test_linear_panel():
         CONFIG["linear_key_path"] = keep
         CONFIG["integrations"] = keep_int
         CONFIG["linear_mine"] = True
+        shutil.rmtree(d)
+
+
+def test_week_panel():
+    """Next per team in plan order, triage over three days, invoices due with their deal."""
+    import shutil
+    import tempfile
+    d = pathlib.Path(tempfile.mkdtemp())
+    keep = (CONFIG["linear_key_path"], CONFIG["integrations"])
+    today = datetime.date.today()
+
+    def ago(n):
+        return (datetime.datetime.utcnow() - datetime.timedelta(days=n, hours=1)).isoformat() + "Z"
+
+    def due(n):
+        return (today + datetime.timedelta(days=n)).isoformat() + "T00:00:00.000000000Z"
+
+    def issue(ident, state, pr=0, order=0, created=""):
+        return {"identifier": ident, "title": "Title " + ident, "url": "https://linear.app/x/" + ident,
+                "priority": pr, "sortOrder": order, "createdAt": created,
+                "state": state, "team": {"key": ident.split("-")[0]}, "project": {"name": "Portal"}}
+    todo, prog, tri = {"type": "unstarted"}, {"type": "started", "name": "In Progress"}, {"type": "triage"}
+    issues = [issue("ACM-2", todo, 2, 1), issue("ACM-1", prog, 4, 9),
+              issue("NW-3", todo, 0, 0), issue("NW-4", todo, 1, 5),
+              issue("NW-9", tri, 1, 0, ago(1)), issue("ACM-6", tri, 0, 0, ago(3)),
+              issue("NW-8", tri, 1, 0, ago(12)), issue("ACM-7", tri, 0, 0, ago(20))]
+    issues += [issue(f"NW-{20 + i}", tri, 0, 0, ago(4 + i)) for i in range(8)]
+    long_text = "ACME second payment for the warehouse rollout with the receipt attached"
+    tasks = [{"content_plaintext": "Invoice: edge of the week", "is_completed": False, "deadline_at": due(7)},
+             {"content_plaintext": "invoice " + long_text, "is_completed": False, "deadline_at": due(5),
+              "linked_records": [{"target_record_id": "nope"}]},
+             {"content_plaintext": "Invoice: Northwind deposit", "is_completed": False, "deadline_at": due(-3),
+              "linked_records": [{"target_record_id": "deal-1"}]},
+             {"content_plaintext": "Invoice: far away", "is_completed": False, "deadline_at": due(8)},
+             {"content_plaintext": "Invoice: paid", "is_completed": True, "deadline_at": due(-1)},
+             {"content_plaintext": "Invoicing setup call", "is_completed": False, "deadline_at": due(1)},
+             {"content_plaintext": "Invoice: no date", "is_completed": False},
+             {"content_plaintext": "Call Sam", "is_completed": False, "deadline_at": due(0)}]
+    got = invoices_due(tasks, today)
+    assert [x["text"] for x in got] == ["Northwind deposit", long_text, "edge of the week"], got
+    deals = [{"id": "deal-1", "name": "Northwind portal", "url": CONFIG["attio_url"] + "/x/deals/record/deal-1"}]
+    try:
+        CONFIG["integrations"] = []
+        assert m_week({"deals": deals}) == "", "both integrations off renders nothing"
+        CONFIG["integrations"] = ["linear", "attio"]
+        CONFIG["linear_key_path"] = d / "linear-api-key"
+        CONFIG["linear_key_path"].write_text("lin_api_FAKEKEY\n")
+        with _lock:
+            _cache["linear_all"] = (time.time(), issues)
+            _cache["invoices"] = (time.time(), got)
+        out = m_week({"deals": deals})
+        assert ">this week<" in out and "FAKEKEY" not in out, out
+        nxt = out[:out.index("In triage")]
+        assert '<span class="n">2</span>' in nxt and nxt.index("ACM-1") < nxt.index("NW-4"), nxt
+        assert not any(x in nxt for x in ("ACM-2", "NW-3", "NW-8")), "one per team, triage excluded"
+        stale = out[out.index("In triage"):out.index("Invoices due")]
+        assert '<div class="group warn">In triage' in out and '<span class="n">10</span>' in stale, stale
+        assert "NW-9" not in stale and "ACM-6" not in stale, "three days or fresher stays out"
+        assert stale.index("ACM-7") < stale.index("NW-8") and ">20d<" in stale, stale
+        assert "and 2 more" in stale and "NW-20" not in stale, stale
+        inv = out[out.index("Invoices due"):]
+        assert '<span class="n">3</span>' in inv and "far away" not in inv, inv
+        assert "Northwind portal" in inv and "deal-1" in inv and 'class="prov warn">passed 3d<' in inv, inv
+        assert long_text[:60] in inv and long_text not in inv, "no deal falls back to the task text"
+        assert (today + datetime.timedelta(days=5)).strftime("due %a %-d") in inv, inv
+    finally:
+        with _lock:
+            _cache.pop("linear_all", None)
+            _cache.pop("invoices", None)
+        CONFIG["linear_key_path"], CONFIG["integrations"] = keep
         shutil.rmtree(d)
 
 
