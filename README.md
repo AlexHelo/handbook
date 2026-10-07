@@ -31,7 +31,7 @@ Drop a `handbook.json` in your vault root. Every key is optional:
 Private extras: a `<vault>/.dashboard/extras.py` with an `anchor(config)` function returning HTML is rendered in the day header. That is where anything personal lives that does not belong in a public repo.
 
 
-Integrations are opt-in per vault: `"integrations": ["attio", "linear", "github"]`. Attio reads `ATTIO_TOKEN` or `~/.attio-token`, Linear reads `LINEAR_API_KEY` or `~/.secrets/linear-api-key` and shows the issues assigned to you or in projects you lead, GitHub uses `gh auth login`.
+Integrations are opt-in per vault: `"integrations": ["attio", "linear", "github"]`. Attio reads `ATTIO_TOKEN` or `~/.attio-token`, Linear reads `LINEAR_API_KEY` or `~/.secrets/linear-api-key` and shows the issues assigned to you or in projects you lead, GitHub uses `gh auth login`. With Linear or Attio on, the today tab adds a `this week` panel: the next ticket per Linear team, triage older than three days, and open Attio tasks starting with `Invoice:` that are due within a week (change the word with `"invoice_prefix"`).
 
 ## Security
 
